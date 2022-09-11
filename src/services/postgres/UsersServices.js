@@ -1,9 +1,9 @@
 const { Pool } = require("pg");
 const InvariantError = require("../../exceptions/InvariantError");
 const NotFoundError = require("../../exceptions/NotFoundError");
+const AuthenticationsError = require("../../exceptions/AuthenticationError");
 const { nanoid } = require("nanoid");
 const bcrypt = require("bcrypt");
-
 
 const UsernameIsTaken = "Gagal menambahkan user. Username sudah digunakan.";
 const FailedAddUser = "User gagal ditambahkan";
@@ -51,7 +51,22 @@ class UsersService {
     }
     return result.rows[0];
   }
-
+  async verifyUserCredential(username, password) {
+    const query = {
+      text: `SELECT id, password FROM users WHERE username = $1`,
+      values: [username],
+    };
+    const result = await this._pool.query(query);
+    if (result.rowCount === 0) {
+      throw new AuthenticationsError("Kredensial yang Anda berikan salah");
+    }
+    const { id, password: hashedPass } = result.rows[0];
+    const isMatch = await bcrypt.compare(password, hashedPass);
+    if (!isMatch) {
+      throw new AuthenticationsError("Kredensial yang Anda berikan salah");
+    }
+    return id;
+  }
   async _verifyNewUsername(username) {
     const query = {
       text: `SELECT 

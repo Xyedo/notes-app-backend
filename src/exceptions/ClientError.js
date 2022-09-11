@@ -3,6 +3,7 @@ class ClientError extends Error {
     super(message);
     this.statusCode = statusCode;
     this.name = "ClientError";
+    Error.captureStackTrace(this, this.constructor);
   }
 }
 
