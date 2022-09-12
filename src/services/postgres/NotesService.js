@@ -11,8 +11,9 @@ const EditNoteByIdFailed = "Gagal memperbarui catatan. Id tidak ditemukan";
 const DeleteNoteByIdFailed = "Catatan gagal dihapus. Id tidak ditemukan";
 
 class NotesService {
-  constructor() {
+  constructor(collaborationService) {
     this._pool = new Pool();
+    this._collaborationService = collaborationService;
   }
 
   async addNote({ title, body, tags, owner }) {
@@ -21,7 +22,7 @@ class NotesService {
     const updateAt = createdAt;
 
     const query = {
-      text: `INSERT INTO notes(id, title, body, tags, created_at, updated_at, owner) 
+      text: `INSERT INTO notes(id, title, body, tags, created_at, updated_at, "owner") 
       VALUES($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
       values: [id, title, body, tags, createdAt, updateAt, owner],
     };
@@ -36,7 +37,21 @@ class NotesService {
 
   async getNotes(owner) {
     const query = {
-      text: `SELECT id, title, body, tags, created_at, updated_at, owner FROM public.notes WHERE owner = $1 LIMIT 10`,
+      text: `SELECT 
+        notes.id, 
+        notes.title, 
+        notes.body, 
+        notes.tags, 
+        notes.created_at, 
+        notes.updated_at, 
+        notes."owner" 
+      FROM public.notes 
+      LEFT JOIN public.collaborations
+      ON notes.id = collaborations.note_id
+      WHERE notes.owner = $1 
+        OR collaborations.user_id = $1
+      GROUP BY notes.id
+      LIMIT 10`,
       values: [owner],
     };
     const result = await this._pool.query(query);
@@ -45,7 +60,19 @@ class NotesService {
 
   async getNotesById(id) {
     const query = {
-      text: `SELECT id, title, body, tags, created_at, updated_at, owner FROM public.notes WHERE id=$1`,
+      text: `SELECT 
+        notes.id, 
+        notes.title, 
+        notes.body, 
+        notes.tags, 
+        notes.created_at, 
+        notes.updated_at, 
+        notes."owner",
+        users.username
+      FROM public.notes 
+      LEFT JOIN public.users
+        ON notes."owner" =users.id
+      WHERE notes.id=$1`,
       values: [id],
     };
     const result = await this._pool.query(query);
@@ -80,10 +107,27 @@ class NotesService {
       throw new NotFoundError(DeleteNoteByIdFailed);
     }
   }
+
+  async verifyNoteAccess(noteId, userId) {
+    try {
+      await this.verifyNoteOwner(noteId, userId);
+    } catch (error) {
+      if (error instanceof NotFoundError) {
+        throw error;
+      }
+
+      try {
+        await this._collaborationService.verifyCollaborator(noteId, userId);
+      } catch {
+        throw error;
+      }
+    }
+  }
+
   async verifyNoteOwner(id, owner) {
     const query = {
       text: `SELECT 
-        id, title, body, tags, created_at, updated_at, owner 
+        owner 
       FROM public.notes
       WHERE id = $1`,
       values: [id],

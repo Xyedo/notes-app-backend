@@ -21,7 +21,7 @@ class UsersService {
     const query = {
       text: `INSERT INTO 
       users
-        (id, username, password, fullname)
+        (id, username, "password", fullname)
       VALUES
         ($1,$2,$3,$4)
         RETURNING id`,
@@ -51,9 +51,18 @@ class UsersService {
     }
     return result.rows[0];
   }
+  async getUsersByUsername(username) {
+    const cleanUsername = `%${username}%`;
+    const query = {
+      text: `SELECT id, username, fullname FROM users WHERE username ILIKE $1`,
+      values: [cleanUsername],
+    };
+    const result = await this._pool.query(query);
+    return result.rows;
+  }
   async verifyUserCredential(username, password) {
     const query = {
-      text: `SELECT id, password FROM users WHERE username = $1`,
+      text: `SELECT id, "password" FROM users WHERE username = $1`,
       values: [username],
     };
     const result = await this._pool.query(query);
