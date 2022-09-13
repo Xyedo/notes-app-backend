@@ -25,7 +25,7 @@ const CollaborationsValidator = require("./validator/collaborations");
 
 // Exports
 const _exports = require("./api/exports");
-const ProducerService = require("./services/rabbitmq/ProducerService");
+const ProducerService = require("./services/rabbitmq/producerService");
 const ExportsValidator = require("./validator/exports");
 
 const init = async () => {
