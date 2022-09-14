@@ -11,9 +11,10 @@ const EditNoteByIdFailed = "Gagal memperbarui catatan. Id tidak ditemukan";
 const DeleteNoteByIdFailed = "Catatan gagal dihapus. Id tidak ditemukan";
 
 class NotesService {
-  constructor(collaborationService) {
+  constructor(collaborationService, cacheService) {
     this._pool = new Pool();
     this._collaborationService = collaborationService;
+    this._cacheService = cacheService;
   }
 
   async addNote({ title, body, tags, owner }) {
@@ -32,30 +33,43 @@ class NotesService {
     if (!result.rows[0]?.id) {
       throw new InvariantError(AddNotesFailed);
     }
+    this._cacheService.delete(`notes:${owner}`);
     return result.rows[0].id;
   }
 
   async getNotes(owner) {
-    const query = {
-      text: `SELECT 
-        notes.id, 
-        notes.title, 
-        notes.body, 
-        notes.tags, 
-        notes.created_at, 
-        notes.updated_at, 
-        notes."owner" 
-      FROM public.notes 
-      LEFT JOIN public.collaborations
-      ON notes.id = collaborations.note_id
-      WHERE notes.owner = $1 
-        OR collaborations.user_id = $1
-      GROUP BY notes.id
-      LIMIT 10`,
-      values: [owner],
-    };
-    const result = await this._pool.query(query);
-    return result.rows.map(mapDBToModel);
+    try {
+      const result = await this._cacheService.get(`notes:${owner}`);
+      return JSON.parse(result);
+    } catch (error) {
+      const query = {
+        text: `SELECT 
+          notes.id, 
+          notes.title, 
+          notes.body, 
+          notes.tags, 
+          notes.created_at, 
+          notes.updated_at, 
+          notes."owner" 
+        FROM public.notes 
+        LEFT JOIN public.collaborations
+        ON notes.id = collaborations.note_id
+        WHERE notes.owner = $1 
+          OR collaborations.user_id = $1
+        GROUP BY notes.id
+        LIMIT 10`,
+        values: [owner],
+      };
+      const result = await this._pool.query(query);
+      const mappedResult = result.rows.map(mapDBToModel);
+
+      await this._cacheService.set(
+        `notes:${owner}`,
+        JSON.stringify(mappedResult)
+      );
+
+      return mappedResult;
+    }
   }
 
   async getNotesById(id) {
@@ -86,26 +100,37 @@ class NotesService {
   async editNoteById(id, { title, body, tags }) {
     const updateAt = new Date().toISOString();
     const query = {
-      text: `UPDATE notes SET title = $1, body=$2, tags=$3, updated_at = $4 WHERE id = $5`,
+      text: `UPDATE notes 
+      SET 
+        title = $1, 
+        body=$2, 
+        tags=$3, 
+        updated_at = $4 
+      WHERE id = $5 
+      RETURNING id, owner`,
       values: [title, body, tags, updateAt, id],
     };
-    const result = await this._pool.query(query);
 
+    const result = await this._pool.query(query);
     if (result.rowCount == 0) {
       throw new NotFoundError(EditNoteByIdFailed);
     }
-    return result.rows.map(mapDBToModel)[0];
+    const { id:retId, owner } = result.rows.map(mapDBToModel)[0];
+    this._cacheService.delete(`notes:${owner}`);
+    return retId;
   }
 
   async deleteNoteById(id) {
     const query = {
-      text: "DELETE FROM notes WHERE id = $1 RETURNING id",
+      text: "DELETE FROM notes WHERE id = $1 RETURNING id, owner",
       values: [id],
     };
     const result = await this._pool.query(query);
     if (result.rowCount == 0) {
       throw new NotFoundError(DeleteNoteByIdFailed);
     }
+    const { owner } = result.rows[0];
+    await this._cacheService.delete(`notes:${owner}`);
   }
 
   async verifyNoteAccess(noteId, userId) {
